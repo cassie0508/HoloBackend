@@ -38,7 +38,7 @@ RenderSettings:
   m_ReflectionIntensity: 1
   m_CustomReflection: {fileID: 0}
   m_Sun: {fileID: 705507994}
-  m_IndirectSpecularColor: {r: 0.44657898, g: 0.4964133, b: 0.5748178, a: 1}
+  m_IndirectSpecularColor: {r: 0, g: 0, b: 0, a: 1}
   m_UseRadianceAmbientProbe: 0
 --- !u!157 &3
 LightmapSettings:
@@ -449,21 +449,19 @@ MonoBehaviour:
   m_GameObject: {fileID: 963194225}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 93c85ae533af38343b6d2c7d00a1df63, type: 3}
+  m_Script: {fileID: 11500000, guid: 9ee93e02b5bc1b941b2a2d4890827c26, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  EnableOriginalPointcloud: 0
-  PointCloudShader: {fileID: 4800000, guid: c010e960066ff73489f2d8a41b826438, type: 3}
-  OcclusionShader: {fileID: 4800000, guid: 8cfb4b3e2078a8e47902e620917cb02d, type: 3}
+  UseOcclusionShader: 1
+  PointCloudShader: {fileID: 0}
+  OcclusionShader: {fileID: 0}
   MaxPointDistance: 0.02
   EnableARBackground: 1
-  ARBackgroundMaterial: {fileID: 2100000, guid: 48893fb64b8e75f4e9cf862f17c26ada, type: 2}
+  ARBackgroundMaterial: {fileID: 0}
   DepthImage: {fileID: 0}
   ColorImage: {fileID: 0}
   ColorInDepthImage: {fileID: 0}
-  EnableDuplication: 1
-  RegionOfInterest: {fileID: 1799680706}
-  DuplicatedReality: {fileID: 615276914}
+  port: 12345
 --- !u!1 &1350128750
 GameObject:
   m_ObjectHideFlags: 0
