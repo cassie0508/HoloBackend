@@ -5,12 +5,13 @@ using UnityEngine;
 using Microsoft.Azure.Kinect.Sensor;
 using NetMQ;
 using NetMQ.Sockets;
+using System.Linq;
 
 namespace Kinect4Azure
 {
-    public class KinectPublisher : MonoBehaviour
+    public class KinectPublisherCopy : MonoBehaviour
     {
-        public static KinectPublisher Instance;
+        public static KinectPublisherCopy Instance;
 
         [Header("ReadOnly and exposed for Debugging")]
         [SerializeField] private Texture2D DepthImage;
@@ -19,7 +20,7 @@ namespace Kinect4Azure
         [SerializeField] private int[] Capture;
         [SerializeField] private Texture2D LookUp;
 
-        private Device _Device;
+        private Playback playback;
         private PublisherSocket dataPubSocket;
         [SerializeField] private string port = "12345";
 
@@ -52,10 +53,10 @@ namespace Kinect4Azure
         {
             try
             {
-                using (var capture = _Device.GetCapture())
+                using (var capture = playback.GetNextCapture())
                 {
                     if (Color == null)
-                        Color = new Texture2D(capture.Color.WidthPixels, capture.Color.HeightPixels, TextureFormat.BGRA32, false);
+                        Color = new Texture2D(1920, 1080, TextureFormat.BGRA32, false);
                     if (Depth == null)
                         Depth = new Texture2D(capture.Depth.WidthPixels, capture.Depth.HeightPixels, TextureFormat.R16, false);
                     if (ColorInDepth == null)
@@ -70,46 +71,31 @@ namespace Kinect4Azure
 
         private IEnumerator CameraCapture()
         {
-            if (Device.GetInstalledCount() == 0)
-            {
-                Debug.LogError("No Kinect Device Found");
-                yield break;
-            }
-
             try
             {
-                _Device = Device.Open();
+                playback = new Playback("Assets/capture.mkv");
             }
-            catch (AzureKinectOpenDeviceException ex)
+            catch (Exception ex)
             {
-                Debug.LogError($"Failed to open Azure Kinect device: {ex.Message}");
+                Debug.LogError($"Failed to open playback file: {ex.Message}");
                 yield break;
             }
 
-            var configuration = new DeviceConfiguration
-            {
-                ColorFormat = ImageFormat.ColorBGRA32,
-                ColorResolution = ColorResolution.R1080p,
-                DepthMode = DepthMode.NFOV_2x2Binned,
-                SynchronizedImagesOnly = true,
-                CameraFPS = FPS.FPS30
-            };
-
-            _Device.StartCameras(configuration);
-
-            var kinectCalibration = _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
+            var calibration = playback.playback_calibration;
+            var kinectCalibration = calibration.CreateTransformation();
 
             SetupTextures(ref ColorImage, ref DepthImage, ref ColorInDepthImage);
+
 
             // Publish camera capture information
             try
             {
-                using (var capture = _Device.GetCapture())
+                using (var capture = playback.GetNextCapture())
                 {
-                    Capture = new int[6] { 
-                        capture.Color.WidthPixels, capture.Color.HeightPixels, 
-                        capture.Depth.WidthPixels, capture.Depth.HeightPixels, 
-                        capture.IR.WidthPixels, capture.IR.HeightPixels 
+                    Capture = new int[6] {
+                        1920, 1080,
+                        capture.Depth.WidthPixels, capture.Depth.HeightPixels,
+                        capture.IR.WidthPixels, capture.IR.HeightPixels
                     };
 
                     byte[] captureData = new byte[Capture.Length * sizeof(int)];
@@ -122,11 +108,11 @@ namespace Kinect4Azure
                 Debug.LogWarning($"An error occurred " + ex.Message);
             }
 
-            byte[] xyTableData = GenerateXYTableData();
+            byte[] xyTableData = GenerateXYTableData(calibration);
             PublishData("XYTable", xyTableData);
 
-            // apply sensor to device offset
-            var extrinsics = _Device.GetCalibration().DeviceExtrinsics[(int)CalibrationDeviceType.Depth + (int)CalibrationDeviceType.Color];
+
+            var extrinsics = calibration.DeviceExtrinsics[(int)CalibrationDeviceType.Depth + (int)CalibrationDeviceType.Color];
             Matrix4x4 extrinsics4x4 = new Matrix4x4();
             extrinsics4x4.SetRow(0, new Vector4(extrinsics.Rotation[0], extrinsics.Rotation[3], extrinsics.Rotation[6], extrinsics.Translation[0] / 1000.0f));
             extrinsics4x4.SetRow(1, new Vector4(extrinsics.Rotation[1], extrinsics.Rotation[4], extrinsics.Rotation[7], extrinsics.Translation[1] / 1000.0f));
@@ -138,11 +124,16 @@ namespace Kinect4Azure
             byte[] calibrationData = Matrix4x4ToByteArray(color2DepthCalibration);
             PublishData("Color2DepthCalibration", calibrationData);
 
-
             while (true)
             {
-                using (var capture = _Device.GetCapture())
+                using (var capture = playback.GetNextCapture())
                 {
+                    if (capture == null)
+                    {
+                        Debug.Log("End of playback file reached.");
+                        break;
+                    }
+
                     ColorImage.LoadRawTextureData(capture.Color.Memory.ToArray());
                     ColorImage.Apply();
 
@@ -206,9 +197,8 @@ namespace Kinect4Azure
             }
         }
 
-        private byte[] GenerateXYTableData()
+        private byte[] GenerateXYTableData(Calibration cal)
         {
-            var cal = _Device.GetCalibration();
             Texture2D xylookup = new Texture2D(DepthImage.width, DepthImage.height, TextureFormat.RGBAFloat, false);
             Vector2[] data = new Vector2[xylookup.width * xylookup.height];
             int idx = 0;
@@ -247,7 +237,6 @@ namespace Kinect4Azure
             return xyTableData;
         }
 
-
         private void OnDestroy()
         {
             Debug.Log("Closing socket on port " + port);
@@ -258,10 +247,10 @@ namespace Kinect4Azure
             StopAllCoroutines();
             Task.WaitAny(Task.Delay(1000));
 
-            if (_Device != null)
+            if (playback != null)
             {
-                _Device.StopCameras();
-                _Device.Dispose();
+                playback.ClosePlaybackFile();
+                playback.Dispose();
             }
         }
     }
