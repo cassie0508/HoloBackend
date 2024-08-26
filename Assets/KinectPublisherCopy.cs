@@ -111,6 +111,7 @@ namespace Kinect4Azure
             PublishData("Camera", cameraData);
 
             /* Publish Frame Data */
+            // TODO: _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
             var kinectCalibration = calibration.CreateTransformation();
 
             while (true)
