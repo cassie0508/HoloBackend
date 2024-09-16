@@ -15,7 +15,7 @@ namespace Kinect4Azure
 
         [Header("ReadOnly and exposed for Debugging")]
         [SerializeField] private Texture2D DepthImage;
-        [SerializeField] private Texture2D ColorImage;
+        // [SerializeField] private Texture2D ColorImage;
         [SerializeField] private Texture2D ColorInDepthImage;
 
         private Device _Device;
@@ -77,7 +77,7 @@ namespace Kinect4Azure
             _Device.StartCameras(configuration);
 
             // For debugging: Set up textures
-            SetupTextures(ref ColorImage, ref DepthImage, ref ColorInDepthImage);
+            SetupTextures(ref DepthImage, ref ColorInDepthImage);
 
             /* Publish Camera Data */
             byte[] xyLookupData = GenerateXYTableData();
@@ -139,29 +139,29 @@ namespace Kinect4Azure
                     }
 
                     // For debugging: Apply data to textures
-                    ColorImage.LoadRawTextureData(capture.Color.Memory.ToArray());
-                    ColorImage.Apply();
+                    //ColorImage.LoadRawTextureData(capture.Color.Memory.ToArray());
+                    //ColorImage.Apply();
                     DepthImage.LoadRawTextureData(capture.Depth.Memory.ToArray());
                     DepthImage.Apply();
                     ColorInDepthImage.LoadRawTextureData(kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray());
                     ColorInDepthImage.Apply();
 
-                    byte[] colorData = capture.Color.Memory.ToArray();
+                    //byte[] colorData = capture.Color.Memory.ToArray();
                     byte[] depthData = capture.Depth.Memory.ToArray();
                     byte[] colorInDepthData = kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray();
 
                     // Data: [colorData.Length][depthData.Length][colorInDepthData.Length]
                     //       [colorData][depthData][colorInDepthData]
-                    int frameTotalSize = colorData.Length + depthData.Length + colorInDepthData.Length + sizeof(int) * 3;
+                    int frameTotalSize = depthData.Length + colorInDepthData.Length + sizeof(int) * 3;
                     byte[] frameData = new byte[frameTotalSize];
 
-                    Buffer.BlockCopy(BitConverter.GetBytes(colorData.Length), 0, frameData, 0, sizeof(int));
+                    //Buffer.BlockCopy(BitConverter.GetBytes(colorData.Length), 0, frameData, 0, sizeof(int));
                     Buffer.BlockCopy(BitConverter.GetBytes(depthData.Length), 0, frameData, sizeof(int) * 1, sizeof(int));
                     Buffer.BlockCopy(BitConverter.GetBytes(colorInDepthData.Length), 0, frameData, sizeof(int) * 2, sizeof(int));
 
-                    Buffer.BlockCopy(colorData, 0, frameData, sizeof(int) * 3, colorData.Length);
-                    Buffer.BlockCopy(depthData, 0, frameData, sizeof(int) * 3 + colorData.Length, depthData.Length);
-                    Buffer.BlockCopy(colorInDepthData, 0, frameData, sizeof(int) * 3 + colorData.Length + depthData.Length, colorInDepthData.Length);
+                    //Buffer.BlockCopy(colorData, 0, frameData, sizeof(int) * 3, colorData.Length);
+                    Buffer.BlockCopy(depthData, 0, frameData, sizeof(int) * 3 + 0, depthData.Length);
+                    Buffer.BlockCopy(colorInDepthData, 0, frameData, sizeof(int) * 3 + 0 + depthData.Length, colorInDepthData.Length);
 
                     PublishData("Frame", frameData);
                 }
@@ -170,14 +170,14 @@ namespace Kinect4Azure
             }
         }
 
-        private void SetupTextures(ref Texture2D Color, ref Texture2D Depth, ref Texture2D ColorInDepth)
+        private void SetupTextures(ref Texture2D Depth, ref Texture2D ColorInDepth)
         {
             try
             {
                 using (var capture = _Device.GetCapture())
                 {
-                    if (Color == null)
-                        Color = new Texture2D(1920, 1080, TextureFormat.BGRA32, false);
+                    //if (Color == null)
+                    //    Color = new Texture2D(1920, 1080, TextureFormat.BGRA32, false);
                     if (Depth == null)
                         Depth = new Texture2D(capture.Depth.WidthPixels, capture.Depth.HeightPixels, TextureFormat.R16, false);
                     if (ColorInDepth == null)
