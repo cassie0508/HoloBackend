@@ -314,7 +314,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   DepthImage: {fileID: 0}
-  ColorImage: {fileID: 0}
   ColorInDepthImage: {fileID: 0}
   port: 12345
 --- !u!1660057539 &9223372036854775807
