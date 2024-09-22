@@ -6,6 +6,7 @@ using Microsoft.Azure.Kinect.Sensor;
 using NetMQ;
 using NetMQ.Sockets;
 using System.Linq;
+using UnityEngine.Playables;
 
 namespace Kinect4Azure
 {
@@ -39,7 +40,7 @@ namespace Kinect4Azure
                 dataPubSocket.Options.SendHighWatermark = 10;
 
                 dataPubSocket.Bind($"tcp://*:{port}");
-                Debug.Log("Successfully bound socket to port " + port);
+                Debug.Log("Successfully bound socket port " + port);
             }
             catch (Exception ex)
             {
@@ -80,8 +81,6 @@ namespace Kinect4Azure
             SetupTextures(ref DepthImage, ref ColorInDepthImage);
 
             /* Publish Camera Data */
-            byte[] xyLookupData = GenerateXYTableData();
-
             var extrinsics = _Device.GetCalibration().DeviceExtrinsics[(int)CalibrationDeviceType.Depth + (int)CalibrationDeviceType.Color];
             Matrix4x4 extrinsics4x4 = new Matrix4x4();
             extrinsics4x4.SetRow(0, new Vector4(extrinsics.Rotation[0], extrinsics.Rotation[3], extrinsics.Rotation[6], extrinsics.Translation[0] / 1000.0f));
@@ -110,20 +109,22 @@ namespace Kinect4Azure
                 Debug.LogWarning("Failed to get capture: " + ex.Message);
             }
 
-            // Data: [xyLookupData.Length][calibrationData.Length][cameraSizeData.Length]
-            //       [xyLookupData][calibrationData][cameraSizeData]
-            int cameraTotalSize = sizeof(int) * 3 + xyLookupData.Length + calibrationData.Length + cameraSizeData.Length;
+            // Data: [calibrationData.Length][cameraSizeData.Length]
+            //       [calibrationData][cameraSizeData]
+            int cameraTotalSize = sizeof(int) * 2 + calibrationData.Length + cameraSizeData.Length;
             byte[] cameraData = new byte[cameraTotalSize];
 
-            Buffer.BlockCopy(BitConverter.GetBytes(xyLookupData.Length), 0, cameraData, 0, sizeof(int));
-            Buffer.BlockCopy(BitConverter.GetBytes(calibrationData.Length), 0, cameraData, sizeof(int) * 1, sizeof(int));
-            Buffer.BlockCopy(BitConverter.GetBytes(cameraSizeData.Length), 0, cameraData, sizeof(int) * 2, sizeof(int));
+            Buffer.BlockCopy(BitConverter.GetBytes(calibrationData.Length), 0, cameraData, 0, sizeof(int));
+            Buffer.BlockCopy(BitConverter.GetBytes(cameraSizeData.Length), 0, cameraData, sizeof(int) * 1, sizeof(int));
 
-            Buffer.BlockCopy(xyLookupData, 0, cameraData, sizeof(int) * 3, xyLookupData.Length);
-            Buffer.BlockCopy(calibrationData, 0, cameraData, sizeof(int) * 3 + xyLookupData.Length, calibrationData.Length);
-            Buffer.BlockCopy(cameraSizeData, 0, cameraData, sizeof(int) * 3 + xyLookupData.Length + calibrationData.Length, cameraSizeData.Length);
+            Buffer.BlockCopy(calibrationData, 0, cameraData, sizeof(int) * 2, calibrationData.Length);
+            Buffer.BlockCopy(cameraSizeData, 0, cameraData, sizeof(int) * 2 + calibrationData.Length, cameraSizeData.Length);
 
             PublishData("Camera", cameraData);
+
+            /* Publish xyLookupData */
+            byte[] xyLookupData = GenerateXYTableData();
+            PublishData("xyLookupData", xyLookupData);
 
             /* Publish Frame Data */
             var kinectCalibration = _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
