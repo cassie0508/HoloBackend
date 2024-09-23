@@ -124,7 +124,17 @@ namespace Kinect4Azure
 
             /* Publish xyLookupData */
             byte[] xyLookupData = GenerateXYTableData();
-            PublishData("xyLookupData", xyLookupData);
+            int splitSize = 500000;  // Split xyLookupData into 3 parts, each part is 50000 in length
+            byte[][] xyLookupParts = new byte[3][];
+
+            for (int i = 0; i < 3; i++)
+            {
+                int startIdx = i * splitSize;
+                int length = Mathf.Min(splitSize, xyLookupData.Length - startIdx);
+                xyLookupParts[i] = new byte[length];
+                Array.Copy(xyLookupData, startIdx, xyLookupParts[i], 0, length);
+                PublishData($"Lookup{i + 1}", xyLookupParts[i]);
+            }
 
             /* Publish Frame Data */
             var kinectCalibration = _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
