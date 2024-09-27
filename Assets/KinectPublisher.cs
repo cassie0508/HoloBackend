@@ -17,6 +17,8 @@ namespace Kinect4Azure
         [Header("ReadOnly and exposed for Debugging")]
         [SerializeField] private Texture2D DepthImage;
         [SerializeField] private Texture2D ColorInDepthImage;
+        [SerializeField] private Texture2D ResizedDepthImage;
+        [SerializeField] private Texture2D ResizedColorInDepthImage;
 
         private Device _Device;
         private PublisherSocket dataPubSocket;
@@ -77,7 +79,8 @@ namespace Kinect4Azure
             _Device.StartCameras(configuration);
 
             // For debugging: Set up textures
-            SetupTextures(ref DepthImage, ref ColorInDepthImage);
+            SetupTextures(ref DepthImage, ref ColorInDepthImage, ref ResizedDepthImage, ref ResizedColorInDepthImage);
+
 
             /* Publish Camera Data */
             var extrinsics = _Device.GetCalibration().DeviceExtrinsics[(int)CalibrationDeviceType.Depth + (int)CalibrationDeviceType.Color];
@@ -94,9 +97,9 @@ namespace Kinect4Azure
                 using (var capture = _Device.GetCapture())
                 {
                     int[] captureArray = new int[6] {
-                        capture.Color.WidthPixels, capture.Color.HeightPixels,
-                        capture.Depth.WidthPixels, capture.Depth.HeightPixels,
-                        capture.IR.WidthPixels, capture.IR.HeightPixels
+                        capture.Color.WidthPixels / 2, capture.Color.HeightPixels / 2,
+                        capture.Depth.WidthPixels / 2, capture.Depth.HeightPixels / 2,
+                        capture.IR.WidthPixels / 2, capture.IR.HeightPixels / 2
                     };
 
                     cameraSizeData = new byte[captureArray.Length * sizeof(int)];
@@ -123,17 +126,7 @@ namespace Kinect4Azure
 
             /* Publish xyLookupData */
             byte[] xyLookupData = GenerateXYTableData();
-            int splitSize = 500000;  // Split xyLookupData into 3 parts, each part is 50000 in length
-            byte[][] xyLookupParts = new byte[3][];
-
-            for (int i = 0; i < 3; i++)
-            {
-                int startIdx = i * splitSize;
-                int length = Mathf.Min(splitSize, xyLookupData.Length - startIdx);
-                xyLookupParts[i] = new byte[length];
-                Array.Copy(xyLookupData, startIdx, xyLookupParts[i], 0, length);
-                PublishData($"Lookup{i + 1}", xyLookupParts[i]);
-            }
+            PublishData($"Lookup", xyLookupData);
 
             /* Publish Frame Data */
             var kinectCalibration = _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
@@ -143,22 +136,29 @@ namespace Kinect4Azure
                 using (var capture = _Device.GetCapture())
                 {
                     // For debugging: Apply data to textures
-                    DepthImage.LoadRawTextureData(capture.Depth.Memory.ToArray());
-                    DepthImage.Apply();
-                    ColorInDepthImage.LoadRawTextureData(kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray());
-                    ColorInDepthImage.Apply();
-
                     byte[] depthData = capture.Depth.Memory.ToArray();
                     byte[] colorInDepthData = kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray();
+                    DepthImage.LoadRawTextureData(depthData);
+                    DepthImage.Apply();
+                    ColorInDepthImage.LoadRawTextureData(colorInDepthData);
+                    ColorInDepthImage.Apply();
 
-                    int frameTotalSize = depthData.Length + colorInDepthData.Length + sizeof(int) * 2;
+                    // Resize both depth and color-in-depth images
+                    ResizeTexture(DepthImage, ResizedDepthImage);
+                    ResizeTexture(ColorInDepthImage, ResizedColorInDepthImage);
+
+                    // Get the resized data
+                    byte[] resizedDepthData = ResizedDepthImage.GetRawTextureData();
+                    byte[] resizedColorInDepthData = ResizedColorInDepthImage.GetRawTextureData();
+
+                    // Create a buffer for the frame data
+                    int frameTotalSize = resizedDepthData.Length + resizedColorInDepthData.Length + sizeof(int) * 2;
                     byte[] frameData = new byte[frameTotalSize];
 
-                    Buffer.BlockCopy(BitConverter.GetBytes(depthData.Length), 0, frameData, 0, sizeof(int));
-                    Buffer.BlockCopy(BitConverter.GetBytes(colorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
-
-                    Buffer.BlockCopy(depthData, 0, frameData, sizeof(int) * 2, depthData.Length);
-                    Buffer.BlockCopy(colorInDepthData, 0, frameData, sizeof(int) * 2 + depthData.Length, colorInDepthData.Length);
+                    Buffer.BlockCopy(BitConverter.GetBytes(resizedDepthData.Length), 0, frameData, 0, sizeof(int));
+                    Buffer.BlockCopy(BitConverter.GetBytes(resizedColorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
+                    Buffer.BlockCopy(resizedDepthData, 0, frameData, sizeof(int) * 2, resizedDepthData.Length);
+                    Buffer.BlockCopy(resizedColorInDepthData, 0, frameData, sizeof(int) * 2 + resizedDepthData.Length, resizedColorInDepthData.Length);
 
                     PublishData("Frame", frameData);
                 }
@@ -167,7 +167,22 @@ namespace Kinect4Azure
             }
         }
 
-        private void SetupTextures(ref Texture2D Depth, ref Texture2D ColorInDepth)
+        private void ResizeTexture(Texture2D source, Texture2D target)
+        {
+            RenderTexture rt = RenderTexture.GetTemporary(target.width, target.height);
+            RenderTexture previous = RenderTexture.active; // Store the current active RenderTexture
+
+            Graphics.Blit(source, rt);
+            RenderTexture.active = rt;
+            target.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+            target.Apply();
+
+            RenderTexture.active = previous; // Restore the previous active RenderTexture
+            RenderTexture.ReleaseTemporary(rt);
+        }
+
+
+        private void SetupTextures(ref Texture2D Depth, ref Texture2D ColorInDepth, ref Texture2D ResizedDepth, ref Texture2D ResizedColorInDepth)
         {
             try
             {
@@ -177,6 +192,10 @@ namespace Kinect4Azure
                         Depth = new Texture2D(capture.Depth.WidthPixels, capture.Depth.HeightPixels, TextureFormat.R16, false);
                     if (ColorInDepth == null)
                         ColorInDepth = new Texture2D(capture.IR.WidthPixels, capture.IR.HeightPixels, TextureFormat.BGRA32, false);
+                    if (ResizedDepth == null)
+                        ResizedDepth = new Texture2D(capture.Depth.WidthPixels / 2, capture.Depth.HeightPixels / 2, TextureFormat.R16, false);
+                    if (ResizedColorInDepth == null)
+                        ResizedColorInDepth = new Texture2D(capture.IR.WidthPixels / 2, capture.IR.HeightPixels / 2, TextureFormat.BGRA32, false);
                 }
             }
             catch (Exception ex)
@@ -188,7 +207,7 @@ namespace Kinect4Azure
         private byte[] GenerateXYTableData()
         {
             var cal = _Device.GetCalibration();
-            Texture2D xylookup = new Texture2D(DepthImage.width, DepthImage.height, TextureFormat.RGBAFloat, false);
+            Texture2D xylookup = new Texture2D(ResizedDepthImage.width, ResizedDepthImage.height, TextureFormat.RGBAFloat, false);
             Vector2[] data = new Vector2[xylookup.width * xylookup.height];
             int idx = 0;
 
