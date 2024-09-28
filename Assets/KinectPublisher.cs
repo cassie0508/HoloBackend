@@ -71,7 +71,7 @@ namespace Kinect4Azure
                 ColorResolution = ColorResolution.R1080p,
                 DepthMode = DepthMode.NFOV_2x2Binned,
                 SynchronizedImagesOnly = true,
-                CameraFPS = FPS.FPS30
+                CameraFPS = FPS.FPS5
             };
 
             _Device.StartCameras(configuration);
@@ -142,23 +142,24 @@ namespace Kinect4Azure
             {
                 using (var capture = _Device.GetCapture())
                 {
-                    // For debugging: Apply data to textures
-                    DepthImage.LoadRawTextureData(capture.Depth.Memory.ToArray());
-                    DepthImage.Apply();
-                    ColorInDepthImage.LoadRawTextureData(kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray());
-                    ColorInDepthImage.Apply();
-
                     byte[] depthData = capture.Depth.Memory.ToArray();
                     byte[] colorInDepthData = kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray();
 
-                    int frameTotalSize = depthData.Length + colorInDepthData.Length + sizeof(int) * 2;
+                    DepthImage.LoadRawTextureData(depthData);
+                    DepthImage.Apply();
+                    ColorInDepthImage.LoadRawTextureData(colorInDepthData);
+                    ColorInDepthImage.Apply();
+
+                    byte[] compressedColorInDepthData = ColorInDepthImage.EncodeToJPG(50);
+
+                    int frameTotalSize = depthData.Length + compressedColorInDepthData.Length + sizeof(int) * 2;
                     byte[] frameData = new byte[frameTotalSize];
 
                     Buffer.BlockCopy(BitConverter.GetBytes(depthData.Length), 0, frameData, 0, sizeof(int));
-                    Buffer.BlockCopy(BitConverter.GetBytes(colorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
+                    Buffer.BlockCopy(BitConverter.GetBytes(compressedColorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
 
                     Buffer.BlockCopy(depthData, 0, frameData, sizeof(int) * 2, depthData.Length);
-                    Buffer.BlockCopy(colorInDepthData, 0, frameData, sizeof(int) * 2 + depthData.Length, colorInDepthData.Length);
+                    Buffer.BlockCopy(compressedColorInDepthData, 0, frameData, sizeof(int) * 2 + depthData.Length, compressedColorInDepthData.Length);
 
                     PublishData("Frame", frameData);
                 }
