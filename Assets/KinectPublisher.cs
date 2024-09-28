@@ -16,12 +16,11 @@ namespace Kinect4Azure
 
         [Header("ReadOnly and exposed for Debugging")]
         [SerializeField] private Texture2D DepthImage;
-        // [SerializeField] private Texture2D ColorImage;
         [SerializeField] private Texture2D ColorInDepthImage;
 
         private Device _Device;
         private PublisherSocket dataPubSocket;
-        [SerializeField] private string port = "12345";
+        [SerializeField] private string port = "55555";
 
         private void Awake()
         {
@@ -72,7 +71,7 @@ namespace Kinect4Azure
                 ColorResolution = ColorResolution.R1080p,
                 DepthMode = DepthMode.NFOV_2x2Binned,
                 SynchronizedImagesOnly = true,
-                CameraFPS = FPS.FPS30
+                CameraFPS = FPS.FPS5
             };
 
             _Device.StartCameras(configuration);
@@ -136,57 +135,46 @@ namespace Kinect4Azure
                 PublishData($"Lookup{i + 1}", xyLookupParts[i]);
             }
 
+            Debug.Log("XYLookup data length " + xyLookupData.Length);
+
             /* Publish Frame Data */
             var kinectCalibration = _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
 
-            // Continuously capture and send data
             while (true)
             {
                 using (var capture = _Device.GetCapture())
                 {
-                    // Compress depth data from R16 to R8
                     byte[] depthData = capture.Depth.Memory.ToArray();
-                    byte[] compressedDepthData = CompressDepthData(depthData);
+                    byte[] depthDataR8 = new byte[depthData.Length / 2];
+                    for (int i = 0; i < depthData.Length / 2; i++)
+                    {
+                        ushort depthValue = BitConverter.ToUInt16(depthData, i * 2);
+                        int maxDepthValue = 1000;   // assume max 1 meter
+                        depthDataR8[i] = depthData[i * 2];
+                        //depthDataR8[i] = (byte)Mathf.Clamp((depthValue * 255) / maxDepthValue, 0, 255);   // [0, 65535] -> [0, 255]
+                    }
+                    DepthImage.LoadRawTextureData(depthDataR8);
+                    DepthImage.Apply();
 
-                    // Send compressed depth and color data
-                    byte[] colorInDepthData = kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray();
+                    byte[] colorInDepthData = kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray(); 
+                    ColorInDepthImage.LoadRawTextureData(colorInDepthData);
+                    ColorInDepthImage.Apply();
+                    byte[] compressedColorInDepthData = ColorInDepthImage.EncodeToJPG(50);
 
-                    PublishFrameData(compressedDepthData, colorInDepthData);
+                    int frameTotalSize = depthDataR8.Length + compressedColorInDepthData.Length + sizeof(int) * 2;
+                    byte[] frameData = new byte[frameTotalSize];
 
-                    Debug.Log("colorInDepthData length: " + colorInDepthData.Length);
-                    Debug.Log("compressedDepthData length: " + compressedDepthData.Length);
+                    Buffer.BlockCopy(BitConverter.GetBytes(depthDataR8.Length), 0, frameData, 0, sizeof(int));
+                    Buffer.BlockCopy(BitConverter.GetBytes(compressedColorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
+
+                    Buffer.BlockCopy(depthDataR8, 0, frameData, sizeof(int) * 2, depthDataR8.Length);
+                    Buffer.BlockCopy(compressedColorInDepthData, 0, frameData, sizeof(int) * 2 + depthDataR8.Length, compressedColorInDepthData.Length);
+
+                    PublishData("Frame", frameData);
                 }
 
-                yield return null; // Limit to around 5 FPS
+                yield return null;
             }
-        }
-
-        private byte[] CompressDepthData(byte[] r16DepthData)
-        {
-            // Compress R16 depth data to R8 by keeping only the lower byte of each R16 pixel
-            int pixelCount = r16DepthData.Length / 2;
-            byte[] r8DepthData = new byte[pixelCount];
-
-            for (int i = 0; i < pixelCount; i++)
-            {
-                r8DepthData[i] = r16DepthData[i * 2]; // Keep only the lower byte
-            }
-
-            return r8DepthData;
-        }
-
-        private void PublishFrameData(byte[] compressedDepthData, byte[] colorInDepthData)
-        {
-            int totalSize = sizeof(int) * 2 + compressedDepthData.Length + colorInDepthData.Length;
-            byte[] frameData = new byte[totalSize];
-
-            Buffer.BlockCopy(BitConverter.GetBytes(compressedDepthData.Length), 0, frameData, 0, sizeof(int));
-            Buffer.BlockCopy(BitConverter.GetBytes(colorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
-
-            Buffer.BlockCopy(compressedDepthData, 0, frameData, sizeof(int) * 2, compressedDepthData.Length);
-            Buffer.BlockCopy(colorInDepthData, 0, frameData, sizeof(int) * 2 + compressedDepthData.Length, colorInDepthData.Length);
-
-            PublishData("Frame", frameData);
         }
 
         private void SetupTextures(ref Texture2D Depth, ref Texture2D ColorInDepth)
