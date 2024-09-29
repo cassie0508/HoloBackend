@@ -35,8 +35,6 @@ namespace Kinect4Azure
             {
                 AsyncIO.ForceDotNet.Force();
                 dataPubSocket = new PublisherSocket();
-                dataPubSocket.Options.TcpKeepalive = false;
-                dataPubSocket.Options.SendHighWatermark = 10;
 
                 dataPubSocket.Bind($"tcp://*:{port}");
                 Debug.Log("Successfully bound socket port " + port);
@@ -137,6 +135,19 @@ namespace Kinect4Azure
 
             /* Publish Frame Data */
             var kinectCalibration = _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
+
+            //int testSize = 100000; // Starting size of the non-empty byte array
+            //while (true)
+            //{
+            //    byte[] testData = Enumerable.Repeat((byte)0xFF, testSize).ToArray(); // Fill byte array with non-empty data (e.g., 0xFF)
+            //    PublishData("Frame", testData); // Send the non-empty byte array as frame data
+
+            //    Debug.Log($"Sent test data with size: {testSize} bytes");
+
+            //    testSize += 20000; // Increase the size of the byte array for each iteration
+
+            //    yield return new WaitForSeconds(1f); // Add a small delay between sends for testing
+            //}
 
             while (true)
             {
