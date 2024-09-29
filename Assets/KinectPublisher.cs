@@ -71,7 +71,7 @@ namespace Kinect4Azure
                 ColorResolution = ColorResolution.R1080p,
                 DepthMode = DepthMode.NFOV_2x2Binned,
                 SynchronizedImagesOnly = true,
-                CameraFPS = FPS.FPS5
+                CameraFPS = FPS.FPS30
             };
 
             _Device.StartCameras(configuration);
@@ -164,7 +164,7 @@ namespace Kinect4Azure
                     PublishData("Frame", frameData);
                 }
 
-                yield return null;
+                yield return new WaitForSeconds(0.2f); //5 frames per second
             }
         }
 
