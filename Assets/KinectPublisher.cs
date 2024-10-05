@@ -5,14 +5,25 @@ using UnityEngine;
 using Microsoft.Azure.Kinect.Sensor;
 using NetMQ;
 using NetMQ.Sockets;
-using System.Linq;
-using UnityEngine.Playables;
+using System.Collections.Generic;
 
 namespace Kinect4Azure
 {
     public class KinectPublisher : MonoBehaviour
     {
         public static KinectPublisher Instance;
+
+        [Header("Pointcloud Configs")]
+        public bool UseOcclusionShader = true;
+        public Shader PointCloudShader;
+        public Shader OcclusionShader;
+        [Range(0.01f, 0.1f)]
+        public float MaxPointDistance = 0.02f;
+
+        [Header("Background Configs\n(Only works if this script is attached onto the camera)")]
+        public bool EnableARBackground = true;
+        [Tooltip("Only needs to be set when BlitToCamera is checked")]
+        public Material ARBackgroundMaterial;
 
         [Header("ReadOnly and exposed for Debugging")]
         [SerializeField] private Texture2D DepthImage;
@@ -35,7 +46,6 @@ namespace Kinect4Azure
             {
                 AsyncIO.ForceDotNet.Force();
                 dataPubSocket = new PublisherSocket();
-
                 dataPubSocket.Bind($"tcp://*:{port}");
                 Debug.Log("Successfully bound socket port " + port);
             }
@@ -74,95 +84,31 @@ namespace Kinect4Azure
 
             _Device.StartCameras(configuration);
 
-            // For debugging: Set up textures
+            var kinectCalibration = _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
+
             SetupTextures(ref DepthImage, ref ColorInDepthImage);
 
-            /* Publish Camera Data */
-            var extrinsics = _Device.GetCalibration().DeviceExtrinsics[(int)CalibrationDeviceType.Depth + (int)CalibrationDeviceType.Color];
-            Matrix4x4 extrinsics4x4 = new Matrix4x4();
-            extrinsics4x4.SetRow(0, new Vector4(extrinsics.Rotation[0], extrinsics.Rotation[3], extrinsics.Rotation[6], extrinsics.Translation[0] / 1000.0f));
-            extrinsics4x4.SetRow(1, new Vector4(extrinsics.Rotation[1], extrinsics.Rotation[4], extrinsics.Rotation[7], extrinsics.Translation[1] / 1000.0f));
-            extrinsics4x4.SetRow(2, new Vector4(extrinsics.Rotation[2], extrinsics.Rotation[5], extrinsics.Rotation[8], extrinsics.Translation[2] / 1000.0f));
-            extrinsics4x4.SetRow(3, new Vector4(0, 0, 0, 1));
-            byte[] calibrationData = Matrix4x4ToByteArray(extrinsics4x4);
-
-            byte[] cameraSizeData = null;
-            try
-            {
-                using (var capture = _Device.GetCapture())
-                {
-                    int[] captureArray = new int[6] {
-                        capture.Color.WidthPixels, capture.Color.HeightPixels,
-                        capture.Depth.WidthPixels, capture.Depth.HeightPixels,
-                        capture.IR.WidthPixels, capture.IR.HeightPixels
-                    };
-
-                    cameraSizeData = new byte[captureArray.Length * sizeof(int)];
-                    Buffer.BlockCopy(captureArray, 0, cameraSizeData, 0, cameraSizeData.Length);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning("Failed to get capture: " + ex.Message);
-            }
-
-            // Data: [calibrationData.Length][cameraSizeData.Length]
-            //       [calibrationData][cameraSizeData]
-            int cameraTotalSize = sizeof(int) * 2 + calibrationData.Length + cameraSizeData.Length;
-            byte[] cameraData = new byte[cameraTotalSize];
-
-            Buffer.BlockCopy(BitConverter.GetBytes(calibrationData.Length), 0, cameraData, 0, sizeof(int));
-            Buffer.BlockCopy(BitConverter.GetBytes(cameraSizeData.Length), 0, cameraData, sizeof(int) * 1, sizeof(int));
-
-            Buffer.BlockCopy(calibrationData, 0, cameraData, sizeof(int) * 2, calibrationData.Length);
-            Buffer.BlockCopy(cameraSizeData, 0, cameraData, sizeof(int) * 2 + calibrationData.Length, cameraSizeData.Length);
-
-            PublishData("Camera", cameraData);
-
-            /* Publish xyLookupData */
-            byte[] xyLookupData = GenerateXYTableData();
-            int splitSize = 500000;  // Split xyLookupData into 3 parts, each part is 50000 in length
-            byte[][] xyLookupParts = new byte[3][];
-
-            for (int i = 0; i < 3; i++)
-            {
-                int startIdx = i * splitSize;
-                int length = Mathf.Min(splitSize, xyLookupData.Length - startIdx);
-                xyLookupParts[i] = new byte[length];
-                Array.Copy(xyLookupData, startIdx, xyLookupParts[i], 0, length);
-                PublishData($"Lookup{i + 1}", xyLookupParts[i]);
-            }
-
-            /* Publish Frame Data */
-            var kinectCalibration = _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
+            Material PointcloudMat = SetupPointcloudShader(PointCloudShader, ColorInDepthImage, ref DepthImage);
+            Material OcclusionMat = SetupPointcloudShader(OcclusionShader, ColorInDepthImage, ref DepthImage);
 
             while (true)
             {
                 using (var capture = _Device.GetCapture())
                 {
                     byte[] depthData = capture.Depth.Memory.ToArray();
-                    byte[] colorInDepthData = kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray();
-
                     DepthImage.LoadRawTextureData(depthData);
                     DepthImage.Apply();
+
+                    byte[] colorInDepthData = kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray();
                     ColorInDepthImage.LoadRawTextureData(colorInDepthData);
                     ColorInDepthImage.Apply();
 
-                    byte[] compressedColorInDepthData = ColorInDepthImage.EncodeToJPG(50);
-
-                    int frameTotalSize = depthData.Length + compressedColorInDepthData.Length + sizeof(int) * 2;
-                    byte[] frameData = new byte[frameTotalSize];
-
-                    Buffer.BlockCopy(BitConverter.GetBytes(depthData.Length), 0, frameData, 0, sizeof(int));
-                    Buffer.BlockCopy(BitConverter.GetBytes(compressedColorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
-
-                    Buffer.BlockCopy(depthData, 0, frameData, sizeof(int) * 2, depthData.Length);
-                    Buffer.BlockCopy(compressedColorInDepthData, 0, frameData, sizeof(int) * 2 + depthData.Length, compressedColorInDepthData.Length);
-
-                    PublishData("Frame", frameData);
+                    // Generate the point cloud data and send it to the subscriber
+                    List<Vector3> pointCloud = GeneratePointCloud(DepthImage, ColorInDepthImage, Matrix4x4.identity);
+                    SendPointCloudData(pointCloud);
                 }
 
-                yield return new WaitForSeconds(0.2f); //5 frames per second
+                yield return new WaitForSeconds(0.2f); // 5 frames per second
             }
         }
 
@@ -180,11 +126,102 @@ namespace Kinect4Azure
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"An error occurred " + ex.Message);
+                Debug.LogWarning($"An error occurred: " + ex.Message);
             }
         }
 
-        private byte[] GenerateXYTableData()
+        private Material SetupPointcloudShader(Shader shader, Texture2D ColorInDepth, ref Texture2D Depth)
+        {
+            GenerateXYTable();
+
+            var PointCloudMat = new Material(shader);
+
+            PointCloudMat.SetPass(0);
+
+            PointCloudMat.SetTexture("_ColorTex", ColorInDepth);
+            PointCloudMat.SetInt("_ColorWidth", ColorInDepth.width);
+            PointCloudMat.SetInt("_ColorHeight", ColorInDepth.height);
+
+            PointCloudMat.SetTexture("_DepthTex", Depth);
+            PointCloudMat.SetInt("_DepthWidth", Depth.width);
+            PointCloudMat.SetInt("_DepthHeight", Depth.height);
+
+            PointCloudMat.SetTexture("_XYLookup", GenerateXYTable());
+
+            var extrinsics = _Device.GetCalibration().DeviceExtrinsics[(int)CalibrationDeviceType.Depth + (int)CalibrationDeviceType.Color];
+            Matrix4x4 extrinsics4x4 = new Matrix4x4();
+            extrinsics4x4.SetRow(0, new Vector4(extrinsics.Rotation[0], extrinsics.Rotation[3], extrinsics.Rotation[6], extrinsics.Translation[0] / 1000.0f));
+            extrinsics4x4.SetRow(1, new Vector4(extrinsics.Rotation[1], extrinsics.Rotation[4], extrinsics.Rotation[7], extrinsics.Translation[1] / 1000.0f));
+            extrinsics4x4.SetRow(2, new Vector4(extrinsics.Rotation[2], extrinsics.Rotation[5], extrinsics.Rotation[8], extrinsics.Translation[2] / 1000.0f));
+            extrinsics4x4.SetRow(3, new Vector4(0, 0, 0, 1));
+
+            Matrix4x4 color2DepthCalibration = extrinsics4x4;
+            PointCloudMat.SetMatrix("_Col2DepCalibration", color2DepthCalibration);
+
+            return PointCloudMat;
+        }
+
+        private List<Vector3> GeneratePointCloud(Texture2D depthTex, Texture2D xyLookupTex, Matrix4x4 col2DepCalibration)
+        {
+            List<Vector3> pointCloud = new List<Vector3>();
+
+            for (int y = 0; y < depthTex.height; y++)
+            {
+                for (int x = 0; x < depthTex.width; x++)
+                {
+                    float depth = depthTex.GetPixel(x, y).r * 65536.0f;
+                    if (depth <= 0) continue;
+
+                    Vector2 xy = new Vector2(xyLookupTex.GetPixel(x, y).r, xyLookupTex.GetPixel(x, y).g);
+                    xy = xy * 2.0f - Vector2.one;
+
+                    Vector3 position = col2DepCalibration.MultiplyPoint3x4(new Vector3(xy.x * depth, -xy.y * depth, depth) * 0.001f);
+                    pointCloud.Add(position);
+                }
+            }
+
+            return pointCloud;
+        }
+
+        private byte[] SerializePointCloud(List<Vector3> pointCloud)
+        {
+            byte[] byteArray = new byte[pointCloud.Count * 3 * sizeof(float)];
+            for (int i = 0; i < pointCloud.Count; i++)
+            {
+                Buffer.BlockCopy(BitConverter.GetBytes(pointCloud[i].x), 0, byteArray, i * 3 * sizeof(float), sizeof(float));
+                Buffer.BlockCopy(BitConverter.GetBytes(pointCloud[i].y), 0, byteArray, i * 3 * sizeof(float) + sizeof(float), sizeof(float));
+                Buffer.BlockCopy(BitConverter.GetBytes(pointCloud[i].z), 0, byteArray, i * 3 * sizeof(float) + 2 * sizeof(float), sizeof(float));
+            }
+            return byteArray;
+        }
+
+        private void SendPointCloudData(List<Vector3> pointCloud)
+        {
+            byte[] pointCloudData = SerializePointCloud(pointCloud);
+            PublishData("PointCloud", pointCloudData);
+        }
+
+        private void PublishData(string topic, byte[] data)
+        {
+            if (dataPubSocket != null)
+            {
+                try
+                {
+                    dataPubSocket.SendMoreFrame(topic).SendFrame(data);
+                }
+                catch (NetMQ.TerminatingException)
+                {
+                    Debug.LogWarning("Context was terminated. Reinitializing socket.");
+                    InitializeSocket();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Failed to publish data: {ex.Message}");
+                }
+            }
+        }
+
+        private Texture2D GenerateXYTable()
         {
             var cal = _Device.GetCalibration();
             Texture2D xylookup = new Texture2D(DepthImage.width, DepthImage.height, TextureFormat.RGBAFloat, false);
@@ -219,50 +256,12 @@ namespace Kinect4Azure
             }
 
             xylookup.Apply();
-            byte[] xyTableData = xylookup.GetRawTextureData();
-            return xyTableData;
-        }
-
-        private byte[] Matrix4x4ToByteArray(Matrix4x4 matrix)
-        {
-            float[] matrixFloats = new float[16];
-            for (int i = 0; i < 16; i++)
-            {
-                matrixFloats[i] = matrix[i];
-            }
-
-            byte[] byteArray = new byte[matrixFloats.Length * sizeof(float)];
-            Buffer.BlockCopy(matrixFloats, 0, byteArray, 0, byteArray.Length);
-            return byteArray;
-        }
-
-        private void PublishData(string topic, byte[] data)
-        {
-            if (dataPubSocket != null)
-            {
-                try
-                {
-                    dataPubSocket.SendMoreFrame(topic).SendFrame(data);
-                }
-                catch (NetMQ.TerminatingException)
-                {
-                    Debug.LogWarning("Context was terminated. Reinitializing socket.");
-                    InitializeSocket();
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"Failed to publish data: {ex.Message}");
-                }
-            }
+            return xylookup;
         }
 
         private void OnDestroy()
         {
-            Debug.Log("Closing socket on port " + port);
-            dataPubSocket.Dispose();
-            NetMQConfig.Cleanup(false);
-            dataPubSocket = null;
-
+            Debug.Log("Destroying publisher...");
             StopAllCoroutines();
             Task.WaitAny(Task.Delay(1000));
 
@@ -271,6 +270,13 @@ namespace Kinect4Azure
                 _Device.StopCameras();
                 _Device.Dispose();
             }
+
+            if (dataPubSocket != null)
+            {
+                dataPubSocket.Dispose();
+                dataPubSocket = null;
+            }
+            NetMQConfig.Cleanup(false);
         }
     }
 }

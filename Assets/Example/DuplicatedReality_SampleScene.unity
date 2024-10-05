@@ -313,6 +313,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9ee93e02b5bc1b941b2a2d4890827c26, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  UseOcclusionShader: 1
+  PointCloudShader: {fileID: 4800000, guid: c010e960066ff73489f2d8a41b826438, type: 3}
+  OcclusionShader: {fileID: 4800000, guid: 8cfb4b3e2078a8e47902e620917cb02d, type: 3}
+  MaxPointDistance: 0.02
+  EnableARBackground: 1
+  ARBackgroundMaterial: {fileID: 0}
   DepthImage: {fileID: 0}
   ColorInDepthImage: {fileID: 0}
   port: 12345
