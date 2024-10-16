@@ -17,10 +17,11 @@ namespace Kinect4Azure
         [Header("ReadOnly and exposed for Debugging")]
         [SerializeField] private Texture2D DepthImage;
         [SerializeField] private Texture2D ColorInDepthImage;
+        
+        [SerializeField] private string port = "55555";
+        private PublisherSocket dataPubSocket;
 
         private Device _Device;
-        private PublisherSocket dataPubSocket;
-        [SerializeField] private string port = "55555";
 
         private void Awake()
         {
@@ -75,7 +76,11 @@ namespace Kinect4Azure
             _Device.StartCameras(configuration);
 
             // For debugging: Set up textures
-            SetupTextures(ref DepthImage, ref ColorInDepthImage);
+            if (!SetupTextures(ref DepthImage, ref ColorInDepthImage))
+            {
+                Debug.LogError("KinectPublisher::CameraCapture(): Something went wrong while setting up camera textures");
+                yield break;
+            }
 
             /* Publish Camera Data */
             var extrinsics = _Device.GetCalibration().DeviceExtrinsics[(int)CalibrationDeviceType.Depth + (int)CalibrationDeviceType.Color];
@@ -148,25 +153,26 @@ namespace Kinect4Azure
                     ColorInDepthImage.LoadRawTextureData(colorInDepthData);
                     ColorInDepthImage.Apply();
 
-                    byte[] compressedColorInDepthData = ColorInDepthImage.EncodeToJPG(50);
+                    //byte[] compressedColorInDepthData = ColorInDepthImage.EncodeToJPG(50);
 
-                    int frameTotalSize = depthData.Length + compressedColorInDepthData.Length + sizeof(int) * 2;
+                    int frameTotalSize = depthData.Length + colorInDepthData.Length + sizeof(int) * 2;
                     byte[] frameData = new byte[frameTotalSize];
 
                     Buffer.BlockCopy(BitConverter.GetBytes(depthData.Length), 0, frameData, 0, sizeof(int));
-                    Buffer.BlockCopy(BitConverter.GetBytes(compressedColorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
+                    Buffer.BlockCopy(BitConverter.GetBytes(colorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
 
                     Buffer.BlockCopy(depthData, 0, frameData, sizeof(int) * 2, depthData.Length);
-                    Buffer.BlockCopy(compressedColorInDepthData, 0, frameData, sizeof(int) * 2 + depthData.Length, compressedColorInDepthData.Length);
+                    Buffer.BlockCopy(colorInDepthData, 0, frameData, sizeof(int) * 2 + depthData.Length, colorInDepthData.Length);
 
                     PublishData("Frame", frameData);
                 }
 
-                yield return new WaitForSeconds(0.2f); //5 frames per second
+                //yield return new WaitForSeconds(0.2f); //5 frames per second
+                yield return null;
             }
         }
 
-        private void SetupTextures(ref Texture2D Depth, ref Texture2D ColorInDepth)
+        private bool SetupTextures(ref Texture2D Depth, ref Texture2D ColorInDepth)
         {
             try
             {
@@ -181,7 +187,9 @@ namespace Kinect4Azure
             catch (Exception ex)
             {
                 Debug.LogWarning($"An error occurred " + ex.Message);
+                return false;
             }
+            return true;
         }
 
         private byte[] GenerateXYTableData()
