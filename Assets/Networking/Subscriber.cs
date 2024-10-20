@@ -5,7 +5,6 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using NetMQ;
 using NetMQ.Sockets;
-using UnityEditor.Search;
 using UnityEngine;
 
 namespace PubSub
@@ -32,11 +31,16 @@ namespace PubSub
             _subThread.Start();
         }
 
-        ~Subscriber()
+        public void Dispose()
         {
             _IsListening = false;
             _subThread?.Join();
             _subThread = null;
+        }
+
+        ~Subscriber()
+        {
+            Dispose();
         }
 
         public void AddTopicCallback(string topic, Action<byte[]> callback)

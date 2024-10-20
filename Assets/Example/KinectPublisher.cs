@@ -7,6 +7,7 @@ using NetMQ;
 using NetMQ.Sockets;
 using System.Linq;
 using UnityEngine.Playables;
+using PubSub;
 
 namespace Kinect4Azure
 {
