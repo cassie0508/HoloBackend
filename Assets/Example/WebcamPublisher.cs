@@ -91,11 +91,17 @@ public class WebcamPublisher : MonoBehaviour
     {
         Debug.Log("Closing socket on port " + port);
 
-        tex.Stop();
         if (dataPubSocket != null)
         {
             dataPubSocket.Dispose();
+            NetMQConfig.Cleanup(false);
             dataPubSocket = null;
+        }
+
+        if (tex != null)
+        {
+            tex.Stop();
+            tex = null;
         }
     }
 
