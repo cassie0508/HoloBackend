@@ -6,10 +6,14 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEditor.Experimental.GraphView;
 using UnityEngine;
+using UnityEngine.UI;
 
 public class WebcamPublisher : MonoBehaviour
 {
     public int WebcamIndex = 0;
+
+    [Header("UI Display")]
+    public RawImage ConnectionIndicator;
 
     [SerializeField] private Texture2D ColorImage;
     private WebCamTexture tex;
@@ -46,6 +50,9 @@ public class WebcamPublisher : MonoBehaviour
 
             dataPubSocket.Bind($"tcp://*:{port}");
             Debug.Log("Successfully bound socket port " + port);
+
+            if (ConnectionIndicator)
+                ConnectionIndicator.color = Color.green;
         }
         catch (Exception ex)
         {
