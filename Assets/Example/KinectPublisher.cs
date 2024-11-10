@@ -111,8 +111,8 @@ public class KinectPublisher : MonoBehaviour
                 PublishData("Frame", colorData);
             }
 
-            //yield return new WaitForSeconds(0.2f); //5 frames per second
-            yield return null;
+            yield return new WaitForSeconds(0.2f); //5 frames per second
+            //yield return null;
         }
     }
 
