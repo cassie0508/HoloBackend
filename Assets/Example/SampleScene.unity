@@ -219,9 +219,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9ee93e02b5bc1b941b2a2d4890827c26, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  CurrentMode: 1
+  port: 12345
   DepthImage: {fileID: 0}
   ColorInDepthImage: {fileID: 0}
-  port: 12345
+  ColorImage: {fileID: 0}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

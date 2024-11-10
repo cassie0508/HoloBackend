@@ -80,7 +80,14 @@ public class WebcamPublisher : MonoBehaviour
         {
             try
             {
-                dataPubSocket.SendMoreFrame(topic).SendFrame(data);
+                long timestamp = DateTime.UtcNow.Ticks;
+                byte[] timestampBytes = BitConverter.GetBytes(timestamp);
+
+                byte[] message = new byte[timestampBytes.Length + data.Length];
+                Buffer.BlockCopy(timestampBytes, 0, message, 0, timestampBytes.Length);
+                Buffer.BlockCopy(data, 0, message, timestampBytes.Length, data.Length);
+
+                dataPubSocket.SendMoreFrame(topic).SendFrame(message);
             }
             catch (NetMQ.TerminatingException)
             {
