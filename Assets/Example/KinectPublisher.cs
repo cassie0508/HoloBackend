@@ -30,6 +30,7 @@ public class KinectPublisher : MonoBehaviour
     
     [Header("Mirror Mode Settings")]
     [SerializeField] private Texture2D ColorImage;
+    private Texture2D resizedColorImage;
 
     private Device _Device;
 
@@ -88,13 +89,13 @@ public class KinectPublisher : MonoBehaviour
         _Device.StartCameras(configuration);
 
         // For debugging: Set up textures
-        if (!SetupTextures(ref ColorImage, ref DepthImage, ref ColorInDepthImage))
+        if (!SetupTextures(ref ColorImage, ref resizedColorImage, ref DepthImage, ref ColorInDepthImage))
         {
             Debug.LogError("KinectPublisher::CameraCapture(): Something went wrong while setting up camera textures");
             yield break;
         }
 
-        int[] sizeArray = new int[2] { ColorImage.width, ColorImage.height };
+        int[] sizeArray = new int[2] { resizedColorImage.width, resizedColorImage.height };
         byte[] sizeData = new byte[sizeArray.Length * sizeof(int)];
         Buffer.BlockCopy(sizeArray, 0, sizeData, 0, sizeData.Length);
         PublishData("Size", sizeData);
@@ -109,9 +110,10 @@ public class KinectPublisher : MonoBehaviour
                 ColorImage.LoadRawTextureData(colorData);
                 ColorImage.Apply();
 
-                byte[] compressedColorInDepthData = ColorInDepthImage.EncodeToJPG(50);
+                DownsampleTexture(ref ColorImage, ref resizedColorImage, resizedColorImage.width, resizedColorImage.height);
+                byte[] resizedColorData = resizedColorImage.GetRawTextureData();
 
-                PublishData("Frame", colorData);
+                PublishData("Frame", resizedColorData);
             }
 
             //yield return new WaitForSeconds(0.2f); //5 frames per second
@@ -149,7 +151,7 @@ public class KinectPublisher : MonoBehaviour
         _Device.StartCameras(configuration);
 
         // For debugging: Set up textures
-        if (!SetupTextures(ref ColorImage, ref DepthImage, ref ColorInDepthImage))
+        if (!SetupTextures(ref ColorImage, ref resizedColorImage, ref DepthImage, ref ColorInDepthImage))
         {
             Debug.LogError("KinectPublisher::CameraCapture(): Something went wrong while setting up camera textures");
             yield break;
@@ -218,8 +220,11 @@ public class KinectPublisher : MonoBehaviour
         {
             using (var capture = _Device.GetCapture())
             {
+                byte[] colorData = capture.Color.Memory.ToArray();
                 byte[] depthData = capture.Depth.Memory.ToArray();
                 byte[] colorInDepthData = kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray();
+
+                Debug.Log($"colorData is {colorData.Length}, depthData is {depthData.Length}, colorInDepthData is {colorInDepthData.Length}");
 
                 DepthImage.LoadRawTextureData(depthData);
                 DepthImage.Apply();
@@ -245,7 +250,7 @@ public class KinectPublisher : MonoBehaviour
         }
     }
 
-    private bool SetupTextures(ref Texture2D Color, ref Texture2D Depth, ref Texture2D ColorInDepth)
+    private bool SetupTextures(ref Texture2D Color, ref Texture2D resizedColor, ref Texture2D Depth, ref Texture2D ColorInDepth)
     {
         try
         {
@@ -253,6 +258,8 @@ public class KinectPublisher : MonoBehaviour
             {
                 if (Color == null)
                     Color = new Texture2D(capture.Color.WidthPixels, capture.Color.HeightPixels, TextureFormat.BGRA32, false);
+                if (resizedColor == null)
+                    resizedColor = new Texture2D(capture.Color.WidthPixels/4, capture.Color.HeightPixels/4, TextureFormat.BGRA32, false);
                 if (Depth == null)
                     Depth = new Texture2D(capture.Depth.WidthPixels, capture.Depth.HeightPixels, TextureFormat.R16, false);
                 if (ColorInDepth == null)
@@ -266,6 +273,24 @@ public class KinectPublisher : MonoBehaviour
         }
         return true;
     }
+
+    public void DownsampleTexture(ref Texture2D originalTexture, ref Texture2D resizedTexture, int targetWidth, int targetHeight)
+    {
+        RenderTexture rt = new RenderTexture(targetWidth, targetHeight, 24);
+        RenderTexture.active = rt;
+
+        // Copy original texture to the render texture
+        Graphics.Blit(originalTexture, rt);
+
+        // Read pixels from the render texture into the new Texture2D
+        resizedTexture.ReadPixels(new Rect(0, 0, targetWidth, targetHeight), 0, 0);
+        resizedTexture.Apply();
+
+        // Clean up
+        RenderTexture.active = null;
+        rt.Release();
+    }
+
 
     private byte[] GenerateXYTableData()
     {
@@ -325,6 +350,7 @@ public class KinectPublisher : MonoBehaviour
         {
             try
             {
+                Debug.Log($"Sending topic and data length: {topic}, {data.Length}");
                 if(topic == "Frame")
                 {
                     long timestamp = DateTime.UtcNow.Ticks;
