@@ -47,6 +47,7 @@ public class KinectPublisher : MonoBehaviour
         {
             AsyncIO.ForceDotNet.Force();
             dataPubSocket = new PublisherSocket();
+            dataPubSocket.Options.SendHighWatermark = 1;
 
             dataPubSocket.Bind($"tcp://*:{port}");
             Debug.Log("Successfully bound socket port " + port);
@@ -108,11 +109,13 @@ public class KinectPublisher : MonoBehaviour
                 ColorImage.LoadRawTextureData(colorData);
                 ColorImage.Apply();
 
+                byte[] compressedColorInDepthData = ColorInDepthImage.EncodeToJPG(50);
+
                 PublishData("Frame", colorData);
             }
 
-            yield return new WaitForSeconds(0.2f); //5 frames per second
-            //yield return null;
+            //yield return new WaitForSeconds(0.2f); //5 frames per second
+            yield return null;
         }
     }
 
