@@ -9,16 +9,8 @@ using System.Linq;
 using UnityEngine.Playables;
 using PubSub;
 
-public class KinectPublisher : MonoBehaviour
+public class ReplicaPublisher : MonoBehaviour
 {
-    public enum Mode
-    {
-        Replica,
-        Mirror
-    }
-
-    [Header("Visualization Mode")]
-    public Mode CurrentMode;
 
     [Header("Network Settings")]
     [SerializeField] private string port = "12345";
@@ -37,9 +29,7 @@ public class KinectPublisher : MonoBehaviour
     private void Start()
     {
         InitializeSocket();
-
-        if(CurrentMode == Mode.Replica) StartCoroutine(CameraCaptureReplica());
-        else if (CurrentMode == Mode.Mirror) StartCoroutine(CameraCaptureMirror());
+        StartCoroutine(CameraCaptureReplica());
     }
 
     private void InitializeSocket()
@@ -56,68 +46,6 @@ public class KinectPublisher : MonoBehaviour
         catch (Exception ex)
         {
             Debug.LogError($"Failed to bind socket: {ex.Message}");
-        }
-    }
-
-    private IEnumerator CameraCaptureMirror()
-    {
-        if (Device.GetInstalledCount() == 0)
-        {
-            Debug.LogError("No Kinect Device Found");
-            yield break;
-        }
-
-        try
-        {
-            _Device = Device.Open();
-        }
-        catch (AzureKinectOpenDeviceException ex)
-        {
-            Debug.LogError($"Failed to open Azure Kinect device: {ex.Message}");
-            yield break;
-        }
-
-        var configuration = new DeviceConfiguration
-        {
-            ColorFormat = ImageFormat.ColorBGRA32,
-            ColorResolution = ColorResolution.R1080p,
-            DepthMode = DepthMode.NFOV_2x2Binned,
-            SynchronizedImagesOnly = true,
-            CameraFPS = FPS.FPS30
-        };
-
-        _Device.StartCameras(configuration);
-
-        // For debugging: Set up textures
-        if (!SetupTextures(ref ColorImage, ref resizedColorImage, ref DepthImage, ref ColorInDepthImage))
-        {
-            Debug.LogError("KinectPublisher::CameraCapture(): Something went wrong while setting up camera textures");
-            yield break;
-        }
-
-        int[] sizeArray = new int[2] { resizedColorImage.width, resizedColorImage.height };
-        byte[] sizeData = new byte[sizeArray.Length * sizeof(int)];
-        Buffer.BlockCopy(sizeArray, 0, sizeData, 0, sizeData.Length);
-        PublishData("Size", sizeData);
-
-        /* Publish Frame Data */
-        while (true)
-        {
-            using (var capture = _Device.GetCapture())
-            {
-                byte[] colorData = capture.Color.Memory.ToArray();
-
-                ColorImage.LoadRawTextureData(colorData);
-                ColorImage.Apply();
-
-                DownsampleTexture(ref ColorImage, ref resizedColorImage, resizedColorImage.width, resizedColorImage.height);
-                byte[] resizedColorData = resizedColorImage.GetRawTextureData();
-
-                PublishData("Frame", resizedColorData);
-            }
-
-            //yield return new WaitForSeconds(0.2f); //5 frames per second
-            yield return null;
         }
     }
 
@@ -274,22 +202,6 @@ public class KinectPublisher : MonoBehaviour
         return true;
     }
 
-    public void DownsampleTexture(ref Texture2D originalTexture, ref Texture2D resizedTexture, int targetWidth, int targetHeight)
-    {
-        RenderTexture rt = new RenderTexture(targetWidth, targetHeight, 24);
-        RenderTexture.active = rt;
-
-        // Copy original texture to the render texture
-        Graphics.Blit(originalTexture, rt);
-
-        // Read pixels from the render texture into the new Texture2D
-        resizedTexture.ReadPixels(new Rect(0, 0, targetWidth, targetHeight), 0, 0);
-        resizedTexture.Apply();
-
-        // Clean up
-        RenderTexture.active = null;
-        rt.Release();
-    }
 
 
     private byte[] GenerateXYTableData()
