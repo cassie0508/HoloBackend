@@ -9,6 +9,8 @@ App/
 Build/
 Build1/
 Build2/
+BuildReplica/
+BuildMirror/
 
 # Visual Studio cache directory
 .vs/

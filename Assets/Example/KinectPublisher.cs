@@ -201,6 +201,7 @@ public class KinectPublisher : MonoBehaviour
 
         /* Publish xyLookupData */
         byte[] xyLookupData = GenerateXYTableData();
+        Debug.Log($"Lookup data length is {xyLookupData.Length}");
         int splitSize = 500000;  // Split xyLookupData into 3 parts, each part is 50000 in length
         byte[][] xyLookupParts = new byte[3][];
 

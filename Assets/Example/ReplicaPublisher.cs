@@ -14,15 +14,13 @@ public class ReplicaPublisher : MonoBehaviour
 
     [Header("Network Settings")]
     [SerializeField] private string port = "12345";
-    private PublisherSocket dataPubSocket;
+    private ResponseSocket responseSocket;
 
     [Header("Replica Mode Settings")]
     [SerializeField] private Texture2D DepthImage;
     [SerializeField] private Texture2D ColorInDepthImage;
-    
-    [Header("Mirror Mode Settings")]
-    [SerializeField] private Texture2D ColorImage;
-    private Texture2D resizedColorImage;
+
+    private Transformation kinectCalibration;
 
     private Device _Device;
 
@@ -37,10 +35,8 @@ public class ReplicaPublisher : MonoBehaviour
         try
         {
             AsyncIO.ForceDotNet.Force();
-            dataPubSocket = new PublisherSocket();
-            dataPubSocket.Options.SendHighWatermark = 10;
-
-            dataPubSocket.Bind($"tcp://*:{port}");
+            responseSocket = new ResponseSocket();
+            responseSocket.Bind($"tcp://*:{port}");
             Debug.Log("Successfully bound socket port " + port);
         }
         catch (Exception ex)
@@ -48,6 +44,7 @@ public class ReplicaPublisher : MonoBehaviour
             Debug.LogError($"Failed to bind socket: {ex.Message}");
         }
     }
+
 
     private IEnumerator CameraCaptureReplica()
     {
@@ -77,15 +74,45 @@ public class ReplicaPublisher : MonoBehaviour
         };
 
         _Device.StartCameras(configuration);
-
-        // For debugging: Set up textures
-        if (!SetupTextures(ref ColorImage, ref resizedColorImage, ref DepthImage, ref ColorInDepthImage))
+        if (!SetupTextures(ref DepthImage, ref ColorInDepthImage))
         {
             Debug.LogError("KinectPublisher::CameraCapture(): Something went wrong while setting up camera textures");
             yield break;
         }
 
-        /* Publish Camera Data */
+        kinectCalibration = _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
+
+        while (true)
+        {
+            if (responseSocket.TryReceiveFrameString(out var request))
+            {
+                Debug.Log($"Received request: {request}");
+                switch (request)
+                {
+                    case "Camera":
+                        SendCameraData();
+                        break;
+                    case "Lookup1":
+                        SendLookupData(1);
+                        break;
+                    case "Lookup2":
+                        SendLookupData(2);
+                        break;
+                    case "Lookup3":
+                        SendLookupData(3);
+                        break;
+                    case "Frame":
+                        SendFrameData();
+                        break;
+                }
+            }
+
+            yield return null;
+        }
+    }
+
+    private void SendCameraData()
+    {
         var extrinsics = _Device.GetCalibration().DeviceExtrinsics[(int)CalibrationDeviceType.Depth + (int)CalibrationDeviceType.Color];
         Matrix4x4 extrinsics4x4 = new Matrix4x4();
         extrinsics4x4.SetRow(0, new Vector4(extrinsics.Rotation[0], extrinsics.Rotation[3], extrinsics.Rotation[6], extrinsics.Translation[0] / 1000.0f));
@@ -125,69 +152,67 @@ public class ReplicaPublisher : MonoBehaviour
         Buffer.BlockCopy(calibrationData, 0, cameraData, sizeof(int) * 2, calibrationData.Length);
         Buffer.BlockCopy(cameraSizeData, 0, cameraData, sizeof(int) * 2 + calibrationData.Length, cameraSizeData.Length);
 
-        PublishData("Camera", cameraData);
-
-        /* Publish xyLookupData */
-        byte[] xyLookupData = GenerateXYTableData();
-        int splitSize = 500000;  // Split xyLookupData into 3 parts, each part is 50000 in length
-        byte[][] xyLookupParts = new byte[3][];
-
-        for (int i = 0; i < 3; i++)
-        {
-            int startIdx = i * splitSize;
-            int length = Mathf.Min(splitSize, xyLookupData.Length - startIdx);
-            xyLookupParts[i] = new byte[length];
-            Array.Copy(xyLookupData, startIdx, xyLookupParts[i], 0, length);
-            PublishData($"Lookup{i + 1}", xyLookupParts[i]);
-        }
-
-        /* Publish Frame Data */
-        var kinectCalibration = _Device.GetCalibration(DepthMode.NFOV_2x2Binned, ColorResolution.R1080p).CreateTransformation();
-
-        while (true)
-        {
-            using (var capture = _Device.GetCapture())
-            {
-                byte[] colorData = capture.Color.Memory.ToArray();
-                byte[] depthData = capture.Depth.Memory.ToArray();
-                byte[] colorInDepthData = kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray();
-
-                Debug.Log($"colorData is {colorData.Length}, depthData is {depthData.Length}, colorInDepthData is {colorInDepthData.Length}");
-
-                DepthImage.LoadRawTextureData(depthData);
-                DepthImage.Apply();
-                ColorInDepthImage.LoadRawTextureData(colorInDepthData);
-                ColorInDepthImage.Apply();
-
-                //byte[] compressedColorInDepthData = ColorInDepthImage.EncodeToJPG(50);
-
-                int frameTotalSize = depthData.Length + colorInDepthData.Length + sizeof(int) * 2;
-                byte[] frameData = new byte[frameTotalSize];
-
-                Buffer.BlockCopy(BitConverter.GetBytes(depthData.Length), 0, frameData, 0, sizeof(int));
-                Buffer.BlockCopy(BitConverter.GetBytes(colorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
-
-                Buffer.BlockCopy(depthData, 0, frameData, sizeof(int) * 2, depthData.Length);
-                Buffer.BlockCopy(colorInDepthData, 0, frameData, sizeof(int) * 2 + depthData.Length, colorInDepthData.Length);
-
-                PublishData("Frame", frameData);
-            }
-
-            //yield return new WaitForSeconds(0.2f); //5 frames per second
-            yield return null;
-        }
+        responseSocket.SendFrame(cameraData);
     }
 
-    private bool SetupTextures(ref Texture2D Color, ref Texture2D resizedColor, ref Texture2D Depth, ref Texture2D ColorInDepth)
+    private void SendLookupData(int part)
+    {
+        part = part - 1;
+        byte[] xyLookupData = GenerateXYTableData();
+        Debug.Log($"Lookup data length is {xyLookupData.Length}");
+        int splitSize = 500000;  
+        byte[][] xyLookupParts = new byte[3][];
+
+        int startIdx = part * splitSize;
+        int length = Mathf.Min(splitSize, xyLookupData.Length - startIdx);
+        xyLookupParts[part] = new byte[length];
+        Array.Copy(xyLookupData, startIdx, xyLookupParts[part], 0, length);
+        responseSocket.SendFrame(xyLookupParts[part]);
+    }
+
+    private void SendFrameData()
+    {
+        using (var capture = _Device.GetCapture())
+        {
+            byte[] colorData = capture.Color.Memory.ToArray();
+            byte[] depthData = capture.Depth.Memory.ToArray();
+            byte[] colorInDepthData = kinectCalibration.ColorImageToDepthCamera(capture).Memory.ToArray();
+
+            Debug.Log($"colorData is {colorData.Length}, depthData is {depthData.Length}, colorInDepthData is {colorInDepthData.Length}");
+
+            DepthImage.LoadRawTextureData(depthData);
+            DepthImage.Apply();
+            ColorInDepthImage.LoadRawTextureData(colorInDepthData);
+            ColorInDepthImage.Apply();
+
+
+            int frameTotalSize = depthData.Length + colorInDepthData.Length + sizeof(int) * 2;
+            byte[] frameData = new byte[frameTotalSize];
+
+            Buffer.BlockCopy(BitConverter.GetBytes(depthData.Length), 0, frameData, 0, sizeof(int));
+            Buffer.BlockCopy(BitConverter.GetBytes(colorInDepthData.Length), 0, frameData, sizeof(int), sizeof(int));
+
+            Buffer.BlockCopy(depthData, 0, frameData, sizeof(int) * 2, depthData.Length);
+            Buffer.BlockCopy(colorInDepthData, 0, frameData, sizeof(int) * 2 + depthData.Length, colorInDepthData.Length);
+
+            long timestamp = DateTime.UtcNow.Ticks;
+            byte[] timestampBytes = BitConverter.GetBytes(timestamp);
+
+            byte[] message = new byte[timestampBytes.Length + frameData.Length];
+            Buffer.BlockCopy(timestampBytes, 0, message, 0, timestampBytes.Length);
+            Buffer.BlockCopy(frameData, 0, message, timestampBytes.Length, frameData.Length);
+            responseSocket.SendFrame(message);
+        }
+
+    }
+
+
+    private bool SetupTextures(ref Texture2D Depth, ref Texture2D ColorInDepth)
     {
         try
         {
             using (var capture = _Device.GetCapture())
             {
-                if (Color == null)
-                    Color = new Texture2D(capture.Color.WidthPixels, capture.Color.HeightPixels, TextureFormat.BGRA32, false);
-                if (resizedColor == null)
-                    resizedColor = new Texture2D(capture.Color.WidthPixels/4, capture.Color.HeightPixels/4, TextureFormat.BGRA32, false);
                 if (Depth == null)
                     Depth = new Texture2D(capture.Depth.WidthPixels, capture.Depth.HeightPixels, TextureFormat.R16, false);
                 if (ColorInDepth == null)
@@ -256,46 +281,12 @@ public class ReplicaPublisher : MonoBehaviour
         return byteArray;
     }
 
-    private void PublishData(string topic, byte[] data)
-    {
-        if (dataPubSocket != null)
-        {
-            try
-            {
-                Debug.Log($"Sending topic and data length: {topic}, {data.Length}");
-                if(topic == "Frame")
-                {
-                    long timestamp = DateTime.UtcNow.Ticks;
-                    byte[] timestampBytes = BitConverter.GetBytes(timestamp);
-
-                    byte[] message = new byte[timestampBytes.Length + data.Length];
-                    Buffer.BlockCopy(timestampBytes, 0, message, 0, timestampBytes.Length);
-                    Buffer.BlockCopy(data, 0, message, timestampBytes.Length, data.Length);
-                    dataPubSocket.SendMoreFrame(topic).SendFrame(message);
-                }
-                else
-                {
-                    dataPubSocket.SendMoreFrame(topic).SendFrame(data);
-                }
-            }
-            catch (NetMQ.TerminatingException)
-            {
-                Debug.LogWarning("Context was terminated. Reinitializing socket.");
-                InitializeSocket();
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"Failed to publish data: {ex.Message}");
-            }
-        }
-    }
-
     private void OnDestroy()
     {
         Debug.Log("Closing socket on port " + port);
-        dataPubSocket.Dispose();
+        responseSocket.Dispose();
         NetMQConfig.Cleanup(false);
-        dataPubSocket = null;
+        responseSocket = null;
 
         StopAllCoroutines();
         Task.WaitAny(Task.Delay(1000));
